@@ -1,0 +1,755 @@
+---
+title: "Capstone_project"
+author: "JBlanco"
+date: "2023-10-20"
+output: html_document
+---
+
+# Libraries
+
+```{r}
+
+rm(list = ls())
+
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(sf)
+library(viridis)
+library(extrafont)
+library(gridExtra)
+```
+
+# Functions
+
+### bound_coord
+
+This function was created specifically to see which are the maximum or minimum values for the latitudes and longitudes of the data. This way one can see where the data is located
+
+```{r}
+
+bound_coord <- function(dataset, bound = max, coord = 'lat') {
+  # The function prints the max and min values of the coordinates of the start and end positions.
+  # bound is a function, can be max() or min(), coord can be the latitude (lat) or longitude (lon).
+  
+  if (coord == 'lat') {
+    
+    df <- select(dataset, start_lat, end_lat) %>%
+      mutate(end_lat = na_if(end_lat, 0), start_lat = na_if(start_lat, 0))
+    
+    print(bound(df$start_lat, na.rm = TRUE))
+    print(bound(df$end_lat, na.rm = TRUE))
+    
+    
+  } else if (coord == 'long') {
+    
+    df <- select(dataset, start_lng, end_lng) %>% 
+      mutate(end_lng = na_if(end_lng, 0), start_lng = na_if(start_lng, 0)) %>% 
+      arrange(desc(start_lng), desc(end_lng))
+    
+    print(bound(df$start_lng, na.rm = TRUE))
+    print(bound(df$end_lng, na.rm = TRUE))
+  
+  
+  } else {
+    
+    stop('variable `coord` is not lat nor long')
+  }}
+```
+
+### distance_lat_lon
+
+This function gives the displacement as a function of the initial and final coordinates, that is, the distance between two points in the surface of a sphere with the earth radius.
+
+```{r}
+distance_lat_lon <- function(lat_1, lon_1, lat_2, lon_2) {
+  
+  rad_earth <-  6371 #km
+  
+  # Convert to radians
+  
+  theta_1 <- lat_1*pi/180 
+  theta_2 <- lat_2*pi/180
+  phi_1 <- lon_2*pi/180
+  phi_2 <- lon_2*pi/180
+  
+  # Use formula for displacement
+  
+  displacement <-  2*rad_earth*asin(sqrt(sin((theta_2-theta_1)/2)^2+cos(theta_2)*cos(theta_1)*sin((phi_2-phi_1)/2)^2))
+}
+```
+
+# PREPARE
+
+## Importing the data
+
+All the .csv files were downloaded in the same directory. The following binds all the data from each month into a single dataframe.
+
+```{r}
+setwd('~/Desktop/DS/Case_study_1/Cyclist_trip_data/') #Go to the data directory
+
+files <- list.files(getwd(), '*.csv') # Make a list of all .csv files
+
+df_list <- lapply(files, read.csv) #Applies the function read.csv to all csv files
+
+#So now we have a list of data frames for all the files
+#The following joins all the data frames of the list in a single one
+
+trip_data <- do.call(rbind, df_list) # The rbind binds multiple groups of rows while the do.call applies rbind using the parameters from the list. This way it isn't a list anymore
+```
+
+Just to check the dataframe has been loaded correctly
+
+```{r}
+glimpse(trip_data)
+
+head(trip_data)
+```
+
+Now we can liberate some space
+
+```{r}
+rm(df_list)
+```
+
+There are some issues with the data, there are missing values in the stations names and IDs. However I don't think that these variables are necessary since the dataframe has the start and end coordinates of the trip, which is enough geographical data.
+
+To see the boundaries of the location of the trips
+
+```{r}
+print(paste('max latitudes', max(trip_data$start_lat), max(trip_data$end_lat)))
+print(paste('min latitudes', min(trip_data$start_lat), min(trip_data$end_lat)))
+
+print(paste('max longitudes', max(trip_data$start_lng), max(trip_data$end_lng)))
+print(paste('min longitudes', min(trip_data$start_lng), min(trip_data$end_lng)))
+```
+
+Since some NA values appear in the end locations, we must check how many rows have this issue
+
+```{r}
+end_loc_no_NA <- trip_data %>%
+  select(end_lat, end_lng) %>% 
+  filter(!is.na(end_lat)) %>% 
+  filter(!is.na(end_lng)) %>%  # This is a df of the final location without the NA values
+  glimpse()
+
+print(paste('max latitudes', max(end_loc_no_NA$end_lat)))
+print(paste('min latitudes', min(end_loc_no_NA$end_lat)))
+
+print(paste('max longitudes', max(end_loc_no_NA$end_lng)))
+print(paste('min longitudes', min(end_loc_no_NA$end_lng)))
+```
+
+Now we are obtaining a nonsense value like 0... how many rows contain this value?
+
+(0 is a nonsense value for US coordinates)
+
+```{r}
+end_loc_no_NA %>%
+  filter(end_lat == 0) %>% 
+  filter(end_lng == 0) %>%  # This is a df of the final location without the NA values
+  nrow()
+```
+
+There are only 10 rows, so we may delete these rows as well, this shouldn't affect the results. Since there are around 6112 rows with NA or 0 values. this is about 0.1 % of the data, which can be neglected without important implications...
+
+We can remove the 0s and NAs and print the boundaries of the coordinates
+
+```{r}
+bound_coord(trip_data, coord = 'lat', bound = min) # min_lat
+bound_coord(trip_data, coord = 'lat', bound = max) # max_lat
+bound_coord(trip_data, coord = 'long', bound = min) # min_lng
+bound_coord(trip_data, coord = 'long', bound = max) # max_lng
+```
+
+Answers to the Guiding questions
+
+-   We can see that the majority of the data is located around Chicago, near the Michigan Lake. The range of latitudes is [ 41.55,42.18] The range of longitudes is [-88.16,-87.3]
+
+-   It is important to highlight that some rows don't have the station names, however they still contain information about the location of the trip
+
+-   In this case the data can be biased depending on the season of the year it's been analized, for example, people can ride bycicles more oftenly on summer than on winter. In this case, the data corresponds to the last year. Also, we can notice that the positions of the stations can differ significantly. This makes me think that the station's position is a variable that needs to be carefully treated for analysis. Therefore we should consider rideable_type, times and dates of the rides, duration and position to distinguish the members, we will use the stations, but acknowledging that there's an important amount of data missing.
+
+-   I believe there's a limitation of the data because there's not rider_id, so we don't know if multiple rides were made by different people or the same person.
+
+-   It's ok to simply analyze the data publicly since the dataset doesn't contain any information about people or other sensible information. Furthermore, the data is public, so anyone should be able to access it
+
+-   The I don't think there are any problems with the data, it is not clean, and there are a lot of empty spaces when it comes to the stations. I also need to check if the other columns are complete.
+
+# CLEANING
+
+Now, I'm going to check that other columns are complete. For this matter, I'm going to use a df that ignores the rows with missing locations
+
+```{r}
+df <- trip_data %>% 
+  mutate(end_lat = na_if(end_lat, 0), start_lat = na_if(start_lat, 0),
+         end_lng = na_if(end_lng, 0), start_lng = na_if(start_lng, 0)) %>% 
+  filter(!is.na(end_lat), !is.na(end_lng), !is.na(start_lat), !is.na(start_lng))
+
+df %>% 
+  filter_all(any_vars(is.na(.))) %>% 
+  nrow()
+```
+
+The result shows 0 rows, therefore, there are not any NA values left to be checked
+
+Now we have to continue with the data types, all columns are characters except for the latitudes and longitudes. As a result, started_at and ended_at are characters, but must be dates
+
+```{r}
+df$started_at <- as.POSIXct(df$started_at)
+
+df$ended_at <- as.POSIXct(df$ended_at)
+
+head(df)
+```
+
+Also it is important to remember that there are empty strings in the station names, these values will be replaced by NAs to see how many rows contain NA values
+
+```{r}
+pre_cleaned_data <- df %>%
+  mutate_all(~ifelse(. %in% c("", NA), NA, .))
+```
+
+Checking the rows with NA values
+
+```{r}
+incomplete_df <- filter_all(pre_cleaned_data, any_vars(is.na(.)))
+
+nrow(incomplete_df)
+```
+
+There are 1377137 rows with empty strings, this represents around 25% of the data, thus, maybe is unnecessary to discard all of them, for example, those which have empty station names still contain important information.
+
+The final revision will be for the member_casual column, since this is the most important column for distinguishing from both populations
+
+```{r}
+useless <- df %>% 
+  select(member_casual) %>%
+  filter(. %in% c("member", "casual"))
+  
+nrow(useless)
+```
+
+Since the useless df has 0 rows, there are not other values than member and casual.
+
+I would also like to know if I can map the stations given the latitudes and longitudes, I'm going to make a list of all distinct stations and their locations
+
+```{r}
+start_stations_df <- df %>%
+  select(start_station_name, start_lat, start_lng, start_station_id) %>%
+  group_by(start_station_id) %>%
+  summarise(av_lat = mean(start_lat), dev_lat = sd(start_lat),
+            av_long = mean(start_lng), dev_lng = sd(start_lng)) %>%
+  arrange(desc(dev_lat))
+
+df <- df %>% 
+  mutate(start_station_name = na_if(start_station_name, ''),
+         end_station_name = na_if(end_station_name,''))
+
+
+nrow(start_stations_df)
+```
+
+
+As we can see from this part, the locations of the stations repeat showing different coordinates and the uncertainties can be as high as around 0.1, therefore it wouldn't be a good idea to fill the names of the stations using the coordinates of the ride as the ID. Also, there are over 1500 stations, so I believe it's better to later make a list of the top 3-10 stations with a higher casual/member ratio, which are the stations of interest in order to target casual users.
+
+### Displacement
+
+In order to differentiate the member and casual populations I would like to compare the displacements, locations, dates and time of use to see if there are any differences
+
+I found a formula that gives the displacements as a function of the initial and final angles, so I'll add a column with the displacement
+
+```{r}
+#Add a column with the displacement in km (see function distance_lat_lon)
+df <- mutate(df, displacement_km = distance_lat_lon(start_lat, start_lng, end_lat, end_lng))
+```
+
+### Duration
+
+The duration of the ride can be a criteria to discard some data since rides shorter than a minute may not be valid for consideration.
+
+```{r}
+df <- df %>% 
+  mutate(duration_min = as.numeric(difftime(ended_at, started_at, units = 'mins')))
+
+head(df)
+```
+
+It is important to check that the displacements and duration are reasonable
+
+```{r}
+df %>% 
+  select(displacement_km, duration_min) %>% 
+  mutate(avg_speed = displacement_km/duration_min) %>% 
+  arrange(desc(avg_speed)) %>% 
+  head()
+```
+
+```{r}
+df %>% 
+  filter(duration_min < 1) %>% 
+  glimpse()
+```
+
+This trips need to be eliminated since represent mostly errors made by the users
+
+```{r}
+df <- df %>% 
+  filter(duration_min > 1)
+```
+
+Finally I'll make a backup for the clean data
+
+```{r}
+write_csv(df, "cleaned_data.csv")
+```
+
+# ANALIZE
+
+```{r}
+# df <- read.csv("cleaned_data.csv")
+
+#df$started_at <- as.POSIXct(df$started_at)
+
+#df$ended_at <- as.POSIXct(df$ended_at)
+
+```
+
+### Displacement
+
+In this part, I'm going to compare the displacements of members and casuals to see if there's any difference.
+
+```{r}
+df %>% 
+  select(displacement_km, member_casual) %>% 
+  group_by(member_casual) %>%
+  summarise(avg_displacement_km = mean(displacement_km),
+            med_displacement_km = median(displacement_km),
+            max_displacement_km = max(displacement_km))
+
+
+```
+
+```{r}
+dat_text <- data.frame(
+  label = c('Avg. 1.59', "Avg. 1.52"),
+  member_casual = c('casual', 'member'),
+  x = c(1.59, 1.52)
+)
+
+# Histograms of displacement for casuals and members:
+my_distance_plot <- ggplot(data = df, mapping = aes(x = displacement_km, y = ..density..)) +
+  geom_histogram(bins = 30, fill = 'skyblue4') +
+  xlim(0, 12) +
+  facet_wrap(~member_casual, labeller = as_labeller(c('casual' = 'Casuals', 'member' = 'Members'))) + # Labels of facets
+  geom_text(data = dat_text, mapping = aes(x = 1.65, y = 0.45, label = label), hjust = 'left', size = 5) +
+  geom_vline(data = dat_text, aes(xintercept = dat_text$x), color = "red", linetype = "dashed") +
+  labs(x = 'Displacement [km]',
+       y = 'Density',
+       title =  'Displacement made of casuals and members for each trip.', hjust = 'center') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color = 'black'),
+        axis.text = element_text("black", size = 9),
+        plot.title = element_text(hjust = 0.5, size = 15))
+
+# Save the plot using ggsave
+ggsave("distance_hist.png", plot = my_distance_plot, dpi = 400, height = 4, width = 7, units = 'in')
+
+my_distance_plot
+
+ggplot(data = df, mapping = aes(x = displacement_km, y = ..density.., fill = member_casual)) +
+  geom_histogram(bins = 30) +
+  xlim(0,12) +
+  labs(x = 'Displacement [km]',
+       y = 'Density',
+       title =  'Displacement made of casuals and members for each trip.', hjust = 'center') +
+  scale_fill_discrete("Membership", 
+                      breaks=c("member","casual"), 
+                      labels=c("Members", "Casuals")) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color = 'black'),
+        axis.text = element_text("black", size = 11),
+        plot.title = element_text(hjust = 0.5, size = 15))
+
+
+```
+
+It can be seen qualitatively that the distributions are almost the same, so there's no reason to believe that members or casuals make longer (in distance) rides. The first histogram shows a similar distribution and the second one can be useful to compare the heights of each bin, they have a similar height.
+
+### Duration
+
+```{r}
+df %>% 
+  select(duration_min, member_casual) %>% 
+  group_by(member_casual) %>%
+  summarise(avg_duration_min = mean(duration_min),
+            med_duration_min = median(duration_min),
+            max_duration_min = max(duration_min))
+
+
+```
+
+From that it can be seen that the max values do not make sense a ride duration, they could be an error associated with the bike delivery back to the stations.
+
+```{r}
+
+dat_text <- data.frame(
+  label = c("Avg: 20.82", "Avg: 12.37"),
+  member_casual   = c('casual', 'member'),
+  x = c(20.82, 12.37)
+)
+
+
+duration_plot <- ggplot(data = df, mapping = aes(x = duration_min, y = ..density..)) +
+  geom_histogram(bins = 100, fill = 'skyblue4') +
+  xlim(0, 120) +
+  facet_wrap(~member_casual, labeller = as_labeller(c('casual' = 'Casuals', 'member' = 'Members'))) + #Labels of facets
+  geom_text(data = dat_text, mapping = aes(x = dat_text$x, y = 0.07, label = label), hjust = 'left', size = 5) +
+  geom_vline(data = dat_text, aes(xintercept = dat_text$x), color = "red", linetype = "dashed") +
+  labs(x = 'Duration [min]',
+       y = 'Density',
+       title = 'Duration of the rides for casuals and members.') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color = 'black'),
+        axis.text = element_text("black", size = 10),
+        plot.title = element_text(hjust = 0.5, size = 15))
+
+
+ggsave("duration_hist.png", plot = duration_plot, dpi = 400, height = 4, width = 7, units = 'in')
+```
+
+It looks like casual users use the bicycles for a longer period of time. This makes sense since one would expect that members use their bicycles for daily activities, like commuting to work.
+
+### Days of the week
+
+```{r}
+day_week_plot <- ggplot(data = df, mapping = aes(x = factor(weekdays(started_at), levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")), y = ..count../sum(..count..), alpha = (..count../sum(..count..)))) +
+  geom_bar(fill = 'darkblue', show.legend = FALSE) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = 'Day of the week',
+       y = 'Rides',
+       title = 'Distribution of bike trips around the week') +
+  facet_wrap(~member_casual, labeller = as_labeller(c('casual' = 'Casuals', 'member' = 'Members'))) + #Labels of facets
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color = 'black'),
+        axis.text = element_text("black", size = 10),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title = element_text(size = 13),
+        plot.title = element_text(hjust = 0.5, size = 15)) +
+  scale_alpha(range = c(0.4, 1))
+
+ggsave("day_week.png", plot = day_week_plot, dpi = 400, height = 4, width = 7, units = 'in')
+
+day_week_plot
+
+```
+
+There you can see that casuals ride more on weekends, specially on Saturdays whereas members do it preferably from Monday to Friday.
+
+#### Time of the day
+
+```{r}
+# Convert weekdays to an ordered factor
+df$weekday <- factor(weekdays(df$started_at), levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"), ordered = TRUE)
+
+# Plot the distribution of trips
+ggplot(data = df, mapping = aes(x = hour(started_at), y = ..density.., alpha = ..density..)) +
+ geom_histogram(bins = 24, fill = 'darkblue', show.legend = FALSE) +
+ facet_wrap(~member_casual + weekday) +
+ labs(x = 'Hour of the day',
+    title = 'Rides distribution along the day') +
+ theme(panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white"),
+    axis.line.x = element_line(color = 'black'),
+    axis.text.x = element_text(color = "black", size = 10),
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title = element_text(size = 13),
+    plot.title = element_text(hjust = 0.5, size = 15)) +
+ scale_alpha(range = c(0.3, 1))
+
+```
+
+There one can notice that the distributions are different from monday to friday from weekends, this effect is enhanced in members. From that we can see the distribution of trips by members and from monday to friday and weekends.
+
+```{r}
+df_mtf <- df %>% 
+  select(member_casual, started_at) %>% 
+  filter(!(weekdays(started_at) == 'Saturday' | weekdays(started_at) == 'Sunday'))
+
+df_wke <- df %>% 
+  select(member_casual, started_at) %>% 
+  filter((weekdays(started_at) == 'Saturday' | weekdays(started_at) == 'Sunday'))
+
+weekdays_plot <- ggplot(data = df_mtf, mapping = aes(x = lubridate::hour(started_at), y = ..density.., alpha = ..density..)) +
+  geom_histogram(bins = 24, fill = 'royalblue4', show.legend = FALSE) +
+  facet_wrap(~member_casual, labeller = as_labeller(c('casual' = 'Casuals', 'member' = 'Members'))) + #Labels of facets
+  labs(x = 'Hour of the day',
+       y = 'Density',
+       title = 'Rides distribution along the day on weekdays') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color = 'black'),
+        axis.text = element_text("black", size = 10),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title = element_text(size = 13),
+        plot.title = element_text(hjust = 0.5, size = 15)) +
+  scale_alpha(range = c(0.3, 1))
+
+ggsave("weekdays.png", plot = weekdays_plot, dpi = 400, height = 4, width = 7, units = 'in')
+
+weekends_plot <- ggplot(data = df_wke, mapping = aes(x = lubridate::hour(started_at), y = ..density.., alpha = ..density..)) +
+  geom_histogram(bins = 24, fill = 'royalblue4', show.legend = FALSE) +
+  facet_wrap(~member_casual, labeller = as_labeller(c('casual' = 'Casuals', 'member' = 'Members'))) + #Labels of facets
+  labs(x = 'Hour of the day',
+       y = 'Density',
+       title = 'Rides distribution along the day on weekends') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color = 'black'),
+        axis.text = element_text("black", size = 10),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title = element_text(size = 13),
+        plot.title = element_text(hjust = 0.5, size = 15)) +
+  scale_alpha(range = c(0.5, 1))
+
+ggsave("weekends.png", plot = weekends_plot, dpi = 400, height = 4, width = 7, units = 'in')
+
+weekdays_plot
+weekends_plot
+
+```
+
+It can be seen that the bicycle use is almost the same on weekends but different on weekdays, this is probably due to members using their bikes to commute to work.
+
+### Month
+
+```{r}
+monthly_plot <- ggplot(data = df, aes(x = month(started_at), y = ..count../sum(..count..), fill = member_casual)) +
+  geom_bar(position = 'dodge') +
+  scale_fill_discrete("Membership", 
+                      breaks=c("member","casual"), 
+                      labels=c("Members", "Casuals")) +
+  labs(title = 'Rides made per month') +
+  scale_x_continuous('Month', breaks = 1:12, labels = month.name) +
+  scale_y_continuous('Rides', labels = function(x) ifelse((seq_along(x)+1) %% 2 == 0, scales::percent(x), ''), 
+                     breaks = seq(0, 0.08, 0.005)) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color = 'black'),
+        axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+        axis.title = element_text(size = 13),
+        plot.title = element_text(hjust = 0.5, size = 15)) +
+  scale_alpha(range = c(0.3, 1))
+
+ggsave("monthly.png", plot = monthly_plot, dpi = 400, height = 4, width = 7, units = 'in')
+
+monthly_plot
+```
+
+From this it is easy to see that the drop of casual rides in winter is much more pronounced than that of members. The reduction in casual users can be almost by a factor of 10, whereas on members the reduction can be by a factor of approximately 3.
+
+```{r}
+ggplot(data = df, mapping = aes(x = lubridate::day(started_at), y = ..density.., alpha = ..density..)) +
+  geom_histogram(bins = 24, fill = 'darkblue') +
+  facet_wrap(~month(started_at)) + #Labels of facets
+  labs(x = 'Day of the month',
+       title = 'Rides distribution over the months') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line.x = element_line(color = 'black'),
+        axis.text.x = element_text("black", size = 10),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title = element_text(size = 13),
+        plot.title = element_text(hjust = 0.5, size = 15)) +
+  scale_alpha(range = c(0.3, 1))
+
+```
+
+The peaks in these month distributions caught my attention, however I haven't found a strong argument that explains them. Basically I would expect 4 peaks per month due to a weekly cycle, on the other hand , I would also expect an increase in bicycle usage on holidays, but they're not that common. Other explanations may be:
+
+-   Paydays
+
+-   Government benefit
+
+-   Holidays that I don't know
+
+-   Weather
+
+-   Other cyclical events.ri
+
+### Bike type
+
+```{r}
+rideable_type_df <- df %>% 
+  select(ride_id, rideable_type, member_casual) %>%
+  filter(rideable_type != 'docked_bike') %>% 
+  group_by(rideable_type, member_casual) %>%
+  summarise(total = sum(!is.na(member_casual)), .groups = 'drop')
+
+
+ggplot(data = rideable_type_df, mapping = aes(x = rideable_type, y = total/sum(total), fill = member_casual)) +
+  geom_bar(position='dodge', stat='identity') +
+  labs(x = 'Ride tipe',
+    y = 'Rides',
+    title = 'Ride tipe in members and casuals') +
+  scale_fill_discrete("Membership", 
+                      breaks=c("member","casual"), 
+                      labels=c("Members", "Casuals")) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = as_labeller(c('classic_bike' = 'Classic bike', 'docked_bike' = 'Docked bike', 'electric_bike' = 'Electric bike'))) +
+    theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color = 'black'),
+        axis.text = element_text("black", size = 10),
+        axis.title = element_text(size = 13),
+        plot.title = element_text(hjust = 0.5, size = 15))
+
+```
+More fancy representation
+```{r}
+bike_type_casual_df <- df %>% 
+  select(ride_id, rideable_type, member_casual) %>%
+  filter(rideable_type != 'docked_bike' & member_casual == 'casual') %>% 
+  group_by(rideable_type) %>%
+  summarise(total = n())
+
+bike_type_member_df <- df %>% 
+  select(ride_id, rideable_type, member_casual) %>%
+  filter(rideable_type != 'docked_bike' & member_casual == 'member') %>% 
+  group_by(rideable_type) %>%
+  summarise(total = n())
+
+
+# For Casuals
+casual_bike_plt <- ggplot(data = bike_type_casual_df, aes(x = "", y = total/sum(total), fill = rideable_type)) +
+  geom_bar(stat = "identity", position = 'fill', width = 0.5) +
+  geom_text(aes(label = scales::percent(total/sum(total))), position = position_stack(vjust = 0.5), size = 7) +
+  coord_polar(theta = "y") +
+  labs(x = NULL,
+       y = NULL,
+       title = 'Casual riders',
+       fill = "Bike Type") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        legend.position = 'left',
+        legend.text = element_text(size = 16),
+        legend.title = element_text(size = 18)) +
+  scale_fill_manual(values = c("classic_bike" = "orange", "electric_bike" = "darkcyan"),
+                    labels = c("Classic Bikes", "Electric Bikes")) + 
+  guides(fill = guide_legend(reverse = TRUE))
+
+# Save the plot
+ggsave("bike_casuals.png", plot = casual_bike_plt, dpi = 400, height = 4, width = 7, units = 'in')
+
+# For Members
+member_bike_plt <- ggplot(data = bike_type_member_df, aes(x = "", y = total/sum(total), fill = rideable_type)) +
+  geom_bar(stat = "identity", position = 'fill', width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = scales::percent(total/sum(total))), position = position_stack(vjust = 0.5), size = 7) +
+  coord_polar(theta = "y") +
+  labs(x = NULL,
+       y = NULL,
+       title = 'Annual members',
+       fill = "Bike Type") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, size = 20)) +
+  scale_fill_manual(values = c("classic_bike" = "orange", "electric_bike" = "darkcyan"),
+                    labels = c("Classic Bikes", "Electric Bikes")) + 
+  guides(fill = guide_legend(reverse = TRUE))
+
+# Save the plot
+ggsave("bike_members.png", plot = member_bike_plt, dpi = 400, height = 4, width = 7, units = 'in')
+
+# Display the plots
+casual_bike_plt
+member_bike_plt
+
+```
+
+
+
+It can be noticed that only casuals have used docked bikes, however, I have looked up the types of bicicles Divvy has available and there are only two types, electric and classic, therefore this may be an error in the data.
+
+### Top casual stations
+
+Now I'm going to use the information to evaluate which are the stations where casual users start their trips the most. For that purpose, I'll group the data by stations, counting the members and casuals for each. Then, I'll make a list of the stations with higher casual/member ratio (for those stations with more than 1000 users, because focusing on stations with less than approximately 3 users per day can be a waste of resources).
+
+```{r}
+
+top_casual_stations <- df %>%
+  select(start_station_name, member_casual) %>% 
+  group_by(start_station_name) %>%
+  summarise(members = sum(member_casual == 'member'),
+            casuals = sum(member_casual == 'casual')) %>% 
+  filter((members+casuals) >= 1000) %>%
+  mutate(casual_member_ratio = casuals/members) %>% 
+  arrange(desc(casuals/members))
+  
+  
+head(top_casual_stations, 10)
+
+```
+
+Here it can be noticed that stations with higher casual-to-member ratio have not necessarily higher casual rides
+
+It is also important to focus on the absolute value of casual members:
+
+```{r}
+  
+head(arrange(top_casual_stations, desc(casuals)), 11)
+
+```
+
+### Location
+
+I would also like to make a visualization that shows a map and the places were members and casual users started their trip.
+
+Before making fancy any stuff, lets plot the histograms of the rides and the latitude just to see if they-re somehow different
+
+```{r}
+ggplot(data = df, mapping = aes(x = start_lat, y = ..count../sum(..count..))) +
+  geom_histogram(bins = 50) +
+  xlim(41.6, 41.8) +
+  facet_wrap(~member_casual)
+
+ggplot(data = df, mapping = aes(x = start_lng, y = ..count../sum(..count..))) +
+  geom_histogram(bins = 50) +
+  xlim(-87.5, -87.87) +
+  facet_wrap(~member_casual)
+```
+
+With those histograms one can see that casuals and members are not equally distributed even if the longitude distibution is very similar. Since plotting a spatial heatmap of the trips made by casuals and members is much easier in Tableau, I'm going to export only the columns of interest (the entire df is more than 1 GB)
+
+```{r}
+df_for_tableau <- df %>% 
+  select(ride_id,
+         started_at,
+         ended_at,
+         start_lng,
+         start_lat,
+         member_casual) %>% 
+  mutate(day_of_week = weekdays(started_at))
+
+write_csv(df_for_tableau, 'cyclist_data_tableau.csv')
+```
