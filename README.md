@@ -10,3 +10,5 @@ In this repository I publish some of my projects in data analysis and scientific
 
 - Solving some Ordinary differential equations (ODEs): This project solves numerically the trajectory of particles subjected to some forces using scipy.integrate to solve ODEs. **(Python)**
 
+- Fourier Analysis of Signals: This short project contains some information of the fourier transform and its capability to extract information from periodic signals and removing noise, and an example using data from the GOES magnetometer. **(Python)**
+
