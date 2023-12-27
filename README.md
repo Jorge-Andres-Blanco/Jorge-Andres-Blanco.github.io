@@ -1,5 +1,5 @@
 # Jorge-Andres-Blanco.github.io
-I am a physics student on my senior year, passionate about science in general, from data science to applied physics. 
+I am a physics student on my senior year, passionate about science in general, from data science to applied physics. Motivated to extract meaningful insights from data
 
 ## Portfolio
 In this repository I publish some of my projects in data analysis and scientific programming
