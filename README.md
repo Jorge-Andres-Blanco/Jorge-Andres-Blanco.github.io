@@ -12,3 +12,4 @@ In this repository I publish some of my projects in data analysis and scientific
 
 - Fourier Analysis of Signals: This short project contains some information of the fourier transform and its capability to extract information from periodic signals and removing noise, and an example using data from the GOES magnetometer. **(Python)**
 
+- WO3: Analysis of experimental data: This is a notebook analyzing data from experiments on electrochromic films of tungsten oxide. The details of the experiment are not mention in this file, but here I process part of the data to obtain some derivatives of experimental quantities in order to see how well the results fit theory.
